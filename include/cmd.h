@@ -25,6 +25,7 @@ struct cmd_node_tag {
     // Redirected output path
     char *rd_output;
 
+    int cmd_len;
     int argv_len;
 
     // Pipe type
@@ -43,6 +44,8 @@ struct cmd_node_list_tag {
     cmd_node_list *next;
     cmd_node *node;
 };
+
+extern void cmd_init();
 
 // Read line to cmd_line buffer
 // return the length of bytes received

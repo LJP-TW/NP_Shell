@@ -56,5 +56,6 @@ void init(void)
 {
     // TODO: Initializing PATH
     // setenv("PATH", "/bin", 1);
+    cmd_init();
 }
 

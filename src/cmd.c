@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <signal.h>
 #include <errno.h>
 
 #include "sys_variable.h"
@@ -26,7 +27,37 @@ const char *special_symbols[] = {">",
                                  "|",
                                  "!"};
 
-cmd_node_list *global_cmd_list;
+static cmd_node_list *global_cmd_list;
+static sigset_t global_sig_set;
+static int global_cmd_len;
+
+static void signal_handler(int signum)
+{
+    switch (signum) {
+    case SIGCHLD:
+        // When child process ends, call signal_handler and wait
+        wait(NULL);
+        
+        global_cmd_len -= 1;
+        if (global_cmd_len == 0) {
+            kill(getpid(), SIGUSR1);
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+void cmd_init()
+{
+    // Register signal handler
+    signal(SIGCHLD, signal_handler);
+
+    // Prepare sigset
+    sigemptyset(&global_sig_set);
+    sigaddset(&global_sig_set, SIGUSR1);
+    sigprocmask(SIG_BLOCK, &global_sig_set, NULL);
+}
 
 int cmd_read(char *cmd_line)
 {
@@ -135,6 +166,7 @@ cmd_node* cmd_parse(char *cmd_line)
     int firstcmd = 1;
     int bulitin_cmd_id = -1;
     char c;
+    int cmd_len = 0;
     char *strtok_arg1 = cmd_line;
     char *token;
     cmd_node *cmd_head;
@@ -155,6 +187,7 @@ cmd_node* cmd_parse(char *cmd_line)
         cmd->cmd  = NULL;
         cmd->argv = NULL;
         cmd->rd_output = NULL;
+        cmd->cmd_len = 0;
         cmd->argv_len = 0;
         cmd->pipetype = 0;
         cmd->numbered = 0;
@@ -185,6 +218,7 @@ cmd_node* cmd_parse(char *cmd_line)
         
         // Ok, save this command
         cmd->cmd = strdup(token);
+        cmd_len += 1;
 
         // Parse argv
         ptr = &(cmd->argv); 
@@ -224,6 +258,8 @@ cmd_node* cmd_parse(char *cmd_line)
         cmd_parse_special_symbols(cmd, &token, ssidx);
     }
 
+    cmd_head->cmd_len = cmd_len;
+
     return cmd_head;
 }
 
@@ -233,8 +269,11 @@ int cmd_run(cmd_node *cmd)
     pid_t pid;
     int old_stdout_pipe = -1;
     int old_stderr_pipe = -1;
+    int retsig;
     cmd_node *next_cmd;
     char **argv;
+
+    global_cmd_len = cmd->cmd_len;
 
     while (cmd) {
         int cur_stdout_pipe[2] = {-1, -1};
@@ -332,9 +371,9 @@ int cmd_run(cmd_node *cmd)
         } else {
             // TODO: Report error
         }
-
-        wait(NULL);
     }
+
+    sigwait(&global_sig_set, &retsig);
 
     return 0;
 }
