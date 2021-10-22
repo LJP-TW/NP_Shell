@@ -88,7 +88,7 @@ static int cmd_parse_special_symbols(cmd_node *cmd, char **token_ptr, int ssidx)
     
     case 1:
         // |
-        if (token[1] == ' ') {
+        if (token[1] == NULL) {
             // Ordinary pipe
             // cmd1 | cmd2
             cmd->pipetype = PIPE_ORDINARY;
@@ -229,60 +229,112 @@ cmd_node* cmd_parse(char *cmd_line)
 
 int cmd_run(cmd_node *cmd)
 {
-    char **argv;
     int idx;
     pid_t pid;
+    int old_stdout_pipe = -1;
+    int old_stderr_pipe = -1;
+    cmd_node *next_cmd;
+    char **argv;
 
-    // TODO: Handle pipe
-    switch(cmd->pipetype) {
-    case PIPE_ORDINARY:
-        break;
-    case PIPE_NUM_STDOUT:
-        break;
-    case PIPE_NUM_OUTERR:
-        break;
-    default:
-        // No pipe
-        break;
-    }
+    while (cmd) {
+        int cur_stdout_pipe[2] = {-1, -1};
+        int cur_stderr_pipe[2] = {-1, -1};
 
-    // TODO: Update global_cmd_list for numbered pipe
+        next_cmd = cmd->next;
 
-    // Execute command
-    if ((pid = fork()) > 0) {
-        // Parent process
-        argv_node *cur_an, *next_an;
-
-        // Free memory
-        if (cmd->cmd)
-            free(cmd->cmd);
-        for (cur_an = cmd->argv; cur_an; cur_an = next_an) {
-            next_an = cur_an->next;
-            free(cur_an->argv);
-            free(cur_an);
+        // TODO: Handle pipe
+        switch(cmd->pipetype) {
+        case PIPE_ORDINARY:
+            pipe(cur_stdout_pipe);
+            break;
+        case PIPE_NUM_STDOUT:
+            break;
+        case PIPE_NUM_OUTERR:
+            break;
+        default:
+            // No pipe
+            break;
         }
-        if (cmd->rd_output)
-            free(cmd->rd_output);
-    } else if (!pid) {
-        // Child process
-        argv = malloc(sizeof(char *) * (cmd->argv_len + 2));
-        argv[0] = cmd->cmd;
-        idx = 1;
-        for (argv_node *an = cmd->argv; an; an = an->next) {
-            argv[idx++] = an->argv;
+
+        // TODO: Update global_cmd_list for numbered pipe
+
+        // Execute command
+        if ((pid = fork()) > 0) {
+            // Parent process
+            argv_node *cur_an, *next_an;
+
+            // Handle pipe
+            // TODO: Do we need to close old pipe?
+            if (cur_stdout_pipe[1] != -1) {
+                close(cur_stdout_pipe[1]);
+                old_stdout_pipe = cur_stdout_pipe[0];
+            } else {
+                old_stdout_pipe = -1;
+            }
+
+            if (cur_stderr_pipe[1] != -1) {
+                close(cur_stderr_pipe[1]);
+                old_stderr_pipe = cur_stderr_pipe[0];
+            } else {
+                old_stderr_pipe = -1;
+            }
+
+            // Free memory
+            if (cmd->cmd)
+                free(cmd->cmd);
+            for (cur_an = cmd->argv; cur_an; cur_an = next_an) {
+                next_an = cur_an->next;
+                free(cur_an->argv);
+                free(cur_an);
+            }
+            if (cmd->rd_output)
+                free(cmd->rd_output);
+            free(cmd);
+
+            // Go to next command
+            cmd = next_cmd;
+        } else if (!pid) {
+            // Child process
+            // Handle pipe
+            if (old_stdout_pipe != -1) {
+                dup2(old_stdout_pipe, STDIN_FILENO); // Not sure about that
+            }
+
+            if (old_stderr_pipe != -1) {
+                dup2(old_stderr_pipe, STDIN_FILENO); // Not sure about that
+            }
+            
+            if (cur_stdout_pipe[1] != -1) {
+                close(cur_stdout_pipe[0]);
+                dup2(cur_stdout_pipe[1], STDOUT_FILENO);
+            }
+
+            if (cur_stderr_pipe[1] != -1) {
+                close(cur_stderr_pipe[0]);
+                dup2(cur_stderr_pipe[1], STDERR_FILENO);
+            }
+
+            // Make argv
+            argv = malloc(sizeof(char *) * (cmd->argv_len + 2));
+            argv[0] = cmd->cmd;
+            idx = 1;
+            for (argv_node *an = cmd->argv; an; an = an->next) {
+                argv[idx++] = an->argv;
+            }
+            argv[idx] = NULL;
+
+            // Execute command
+            execvp(cmd->cmd, argv);
+
+            // TODO: Handle error
+            printf("GG %d\n", errno);
+            exit(errno);
+        } else {
+            // TODO: Report error
         }
-        argv[idx] = NULL;
-
-        execvp(cmd->cmd, argv);
-
-        // TODO: Handle error
-        printf("GG %d\n", errno);
-        exit(errno);
-    } else {
-        // TODO: Report error
+        
+        wait(NULL);
     }
-
-    wait(NULL);
 
     return 0;
 }
