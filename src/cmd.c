@@ -32,7 +32,9 @@ int cmd_read(char *cmd_line)
 {
     int len;
 
-    fgets(cmd_line, MAX_CMDLINE_LEN, stdin);
+    if (!fgets(cmd_line, MAX_CMDLINE_LEN, stdin)) {
+        exit(1);
+    }
 
     len = strlen(cmd_line);
 
