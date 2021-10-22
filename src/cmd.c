@@ -332,7 +332,7 @@ int cmd_run(cmd_node *cmd)
         } else {
             // TODO: Report error
         }
-        
+
         wait(NULL);
     }
 

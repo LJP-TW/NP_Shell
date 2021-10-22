@@ -24,6 +24,11 @@ int main(void)
         // Reading command
         cmd_line_len = cmd_read(cmd_line);
 
+        if (!cmd_line_len) {
+            // Empty command
+            continue;
+        }
+
         // Parsing command
         cmd = cmd_parse(cmd_line);
 
