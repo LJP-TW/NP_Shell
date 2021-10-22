@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <errno.h>
+#include <sys/wait.h>
 
 #include "sys_variable.h"
 #include "cmd.h"
@@ -28,20 +29,18 @@ const char *special_symbols[] = {">",
                                  "!"};
 
 static cmd_node_list *global_cmd_list;
-static sigset_t global_sig_set;
-static int global_cmd_len;
+static int use_sh_wait;
 
 static void signal_handler(int signum)
 {
     switch (signum) {
     case SIGCHLD:
+        if (!use_sh_wait)
+            return;
+
         // When child process ends, call signal_handler and wait
         wait(NULL);
-        
-        global_cmd_len -= 1;
-        if (global_cmd_len == 0) {
-            kill(getpid(), SIGUSR1);
-        }
+
         break;
     default:
         break;
@@ -52,11 +51,6 @@ void cmd_init()
 {
     // Register signal handler
     signal(SIGCHLD, signal_handler);
-
-    // Prepare sigset
-    sigemptyset(&global_sig_set);
-    sigaddset(&global_sig_set, SIGUSR1);
-    sigprocmask(SIG_BLOCK, &global_sig_set, NULL);
 }
 
 int cmd_read(char *cmd_line)
@@ -269,11 +263,10 @@ int cmd_run(cmd_node *cmd)
     pid_t pid;
     int old_stdout_pipe = -1;
     int old_stderr_pipe = -1;
-    int retsig;
     cmd_node *next_cmd;
     char **argv;
 
-    global_cmd_len = cmd->cmd_len;
+    use_sh_wait = 1;
 
     while (cmd) {
         int cur_stdout_pipe[2] = {-1, -1};
@@ -284,7 +277,9 @@ int cmd_run(cmd_node *cmd)
         // TODO: Handle pipe
         switch(cmd->pipetype) {
         case PIPE_ORDINARY:
-            pipe(cur_stdout_pipe);
+            if (pipe(cur_stdout_pipe)) {
+                printf("[x] pipe error: %d\n", errno);
+            }
             break;
         case PIPE_NUM_STDOUT:
             break;
@@ -303,7 +298,14 @@ int cmd_run(cmd_node *cmd)
             argv_node *cur_an, *next_an;
 
             // Handle pipe
-            // TODO: Do we need to close old pipe?
+            if (old_stdout_pipe != -1) {
+                close(old_stdout_pipe);
+            }
+
+            if (old_stderr_pipe != -1) {
+                close(old_stderr_pipe);
+            }
+
             if (cur_stdout_pipe[1] != -1) {
                 close(cur_stdout_pipe[1]);
                 old_stdout_pipe = cur_stdout_pipe[0];
@@ -369,11 +371,14 @@ int cmd_run(cmd_node *cmd)
             printf("GG %d\n", errno);
             exit(errno);
         } else {
-            // TODO: Report error
+            // TODO: handle error
+            printf("[x] fork error\n");
         }
     }
 
-    sigwait(&global_sig_set, &retsig);
+    // Disable wait in signal handler
+    use_sh_wait = 0;
+    while (wait(NULL) > 0);
 
     return 0;
 }
