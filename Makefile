@@ -23,3 +23,6 @@ remake: remove $(TARGET)
 remove: 
 	@$(RM) $(TARGET)
 
+.PHONY: test
+test: $(TARGET)
+	@env -i stdbuf -o 0 -e 0 ./$(TARGET) < ./testcase/testcase_current
