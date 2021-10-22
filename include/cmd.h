@@ -38,12 +38,16 @@ struct cmd_node_tag {
     int numbered; 
 };
 
+typedef struct cmd_node_list_tag cmd_node_list;
+struct cmd_node_list_tag {
+    cmd_node_list *next;
+    cmd_node *node;
+};
+
 // Read line to cmd_line buffer
 // return the length of bytes received
 extern int cmd_read(char *cmd_line);
 
-int cmd_parse_special_symbols(cmd_node *cmd, char **token, int ssidx);
-void cmd_parse_bulitin_cmd(cmd_node *cmd, char *token, int bulitin_cmd_id);
 extern cmd_node* cmd_parse(char *cmd_line);
 
 extern int cmd_run(cmd_node *cmd);

@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <unistd.h>
+#include <errno.h>
 
 #include "sys_variable.h"
 #include "cmd.h"
@@ -13,6 +15,9 @@
 #define IS_DIGIT(x) (48 <= x && x <= 57)
 #define IS_ALPHADIGIT(x) (IS_ALPHABET(x) || IS_DIGIT(x))
 
+// declared in unistd.h
+extern char** environ;
+
 const char *bulitin_cmds[] = {"setenv", 
                               "printenv", 
                               "exit"};
@@ -20,6 +25,8 @@ const char *bulitin_cmds[] = {"setenv",
 const char *special_symbols[] = {">", 
                                  "|",
                                  "!"};
+
+cmd_node_list *global_cmd_list;
 
 int cmd_read(char *cmd_line)
 {
@@ -37,7 +44,27 @@ int cmd_read(char *cmd_line)
     return len;
 }
 
-int cmd_parse_special_symbols(cmd_node *cmd, char **token_ptr, int ssidx)
+static int valid_filepath(char *filepath)
+{
+    int ok = 1;
+
+    for (char c = *filepath++; c; c = *filepath++) {
+        if (IS_ALPHADIGIT(c)) {
+            continue;
+        }
+
+        if (c == '.' || c == '/' || c == '_') {
+            continue;
+        }
+
+        ok = 0;
+        return ok;
+    }
+
+    return ok;
+}
+
+static int cmd_parse_special_symbols(cmd_node *cmd, char **token_ptr, int ssidx)
 {
     // Parse special symbols
     char *token = *token_ptr;
@@ -96,7 +123,7 @@ int cmd_parse_special_symbols(cmd_node *cmd, char **token_ptr, int ssidx)
     return 0;
 }
 
-void cmd_parse_bulitin_cmd(cmd_node *cmd, char *token, int bulitin_cmd_id)
+static void cmd_parse_bulitin_cmd(cmd_node *cmd, char *token, int bulitin_cmd_id)
 {
     // TODO: Parse bulit-in command
 }
@@ -130,9 +157,8 @@ cmd_node* cmd_parse(char *cmd_line)
         cmd->pipetype = 0;
         cmd->numbered = 0;
 
-        // Check command isn't special symbol
-        c = token[0];
-        if (!IS_ALPHADIGIT(c)) {
+        // Check command is a valid path
+        if (!valid_filepath(token)) {
             // TODO: Report error
             break;
         }
@@ -201,6 +227,60 @@ cmd_node* cmd_parse(char *cmd_line)
 
 int cmd_run(cmd_node *cmd)
 {
+    char **argv;
+    int idx;
+    pid_t pid;
+
+    // TODO: Handle pipe
+    switch(cmd->pipetype) {
+    case PIPE_ORDINARY:
+        break;
+    case PIPE_NUM_STDOUT:
+        break;
+    case PIPE_NUM_OUTERR:
+        break;
+    default:
+        // No pipe
+        break;
+    }
+
+    // TODO: Update global_cmd_list for numbered pipe
+
+    // Execute command
+    if ((pid = fork()) > 0) {
+        // Parent process
+        argv_node *cur_an, *next_an;
+
+        // Free memory
+        if (cmd->cmd)
+            free(cmd->cmd);
+        for (cur_an = cmd->argv; cur_an; cur_an = next_an) {
+            next_an = cur_an->next;
+            free(cur_an->argv);
+            free(cur_an);
+        }
+        if (cmd->rd_output)
+            free(cmd->rd_output);
+    } else if (!pid) {
+        // Child process
+        argv = malloc(sizeof(char *) * (cmd->argv_len + 2));
+        argv[0] = cmd->cmd;
+        idx = 1;
+        for (argv_node *an = cmd->argv; an; an = an->next) {
+            argv[idx++] = an->argv;
+        }
+        argv[idx] = NULL;
+
+        execvp(cmd->cmd, argv);
+
+        // TODO: Handle error
+        printf("GG %d\n", errno);
+        exit(errno);
+    } else {
+        // TODO: Report error
+    }
+
+    wait(NULL);
 
     return 0;
 }

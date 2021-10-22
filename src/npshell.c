@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "sys_variable.h"
 #include "prompt.h"
@@ -49,5 +50,6 @@ int main(void)
 void init(void)
 {
     // TODO: Initializing PATH
+    // setenv("PATH", "/bin", 1);
 }
 
