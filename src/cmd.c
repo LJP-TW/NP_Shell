@@ -155,6 +155,7 @@ static int cmd_parse_special_symbols(cmd_node *cmd, char **token_ptr, int ssidx)
 static void cmd_parse_bulitin_cmd(cmd_node *cmd, char *token, int bulitin_cmd_id)
 {
     // TODO: Parse bulit-in command
+
 }
 
 cmd_node* cmd_parse(char *cmd_line)
@@ -474,8 +475,8 @@ int cmd_run(cmd_node *cmd)
             // Execute command
             execvp(cmd->cmd, argv);
 
-            // TODO: Handle error
-            printf("GG %d\n", errno);
+            // Handle error
+            fprintf(stderr, "Unknown command: [%s].\n", cmd->cmd);
             exit(errno);
         } else {
             // TODO: handle error
