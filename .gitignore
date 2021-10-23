@@ -3,6 +3,9 @@
 # Learn more about .gitignore:
 #     https://www.atlassian.com/git/tutorials/saving-changes/gitignore
 
+# for testing
+np_project1_demo_sample/
+
 # target binary
 npshell
 
