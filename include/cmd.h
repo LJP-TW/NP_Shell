@@ -39,10 +39,11 @@ struct cmd_node_tag {
     int numbered; 
 };
 
-typedef struct cmd_node_list_tag cmd_node_list;
-struct cmd_node_list_tag {
-    cmd_node_list *next;
-    cmd_node *node;
+typedef struct numbered_pipe_node_tag np_node;
+struct numbered_pipe_node_tag {
+    np_node *next;
+    int numbered;
+    int fd[2];
 };
 
 extern void cmd_init();

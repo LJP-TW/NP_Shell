@@ -28,7 +28,7 @@ const char *special_symbols[] = {">",
                                  "|",
                                  "!"};
 
-static cmd_node_list *global_cmd_list;
+static np_node *global_nplist;
 static int use_sh_wait;
 
 static void signal_handler(int signum)
@@ -257,68 +257,153 @@ cmd_node* cmd_parse(char *cmd_line)
     return cmd_head;
 }
 
+static np_node* fdlist_find_by_numbered(int numbered)
+{
+    np_node **fd_ptr;
+    np_node *fd_cur;
+    
+    // Find corresponding numbered pipe
+    fd_ptr = &global_nplist;
+    while ((fd_cur = *fd_ptr)) {
+        fd_ptr = &(fd_cur->next);
+
+        if (fd_cur->numbered == numbered) {
+            break;
+        }
+    }
+
+    return fd_cur;
+}
+
+static void fdlist_remove_by_numbered(int numbered)
+{
+    np_node **fd_ptr;
+    np_node *fd_cur;
+    
+    // Find corresponding numbered pipe
+    fd_ptr = &global_nplist;
+    while ((fd_cur = *fd_ptr)) {
+        if (fd_cur->numbered == numbered) {
+            // Keep chain
+            *fd_ptr = fd_cur->next;
+            
+            // Free it
+            close(fd_cur->fd[0]);
+            close(fd_cur->fd[1]);
+            free(fd_cur);
+
+            // End
+            break;
+        } 
+        else {
+            fd_ptr = &(fd_cur->next);
+        }
+    }
+}
+
+static np_node* fdlist_insert(int numbered)
+{
+    np_node **fd_ptr;
+    np_node *fd_cur;
+    np_node *new_np = malloc(sizeof(np_node));
+    new_np->next = NULL;
+    new_np->numbered = numbered;
+    pipe(new_np->fd);
+
+    // Insert
+    fd_ptr = &global_nplist;
+    while ((fd_cur = *fd_ptr)) {
+        fd_ptr = &(fd_cur->next);
+    }
+    *fd_ptr = new_np;
+
+    return new_np;
+}
+
+static void fdlist_update()
+{
+    np_node **fd_ptr;
+    np_node *fd_cur;
+    
+    // Find corresponding numbered pipe
+    fd_ptr = &global_nplist;
+    while ((fd_cur = *fd_ptr)) {
+        if (--fd_cur->numbered == -1) {
+            // Keep chain
+            *fd_ptr = fd_cur->next;
+
+            // Free it
+            close(fd_cur->fd[0]);
+            close(fd_cur->fd[1]);
+            free(fd_cur);
+        } 
+        else {
+            fd_ptr = &(fd_cur->next);
+        }
+    }
+}
+
 int cmd_run(cmd_node *cmd)
 {
     int idx;
     pid_t pid;
-    int old_stdout_pipe = -1;
-    int old_stderr_pipe = -1;
+    int read_pipe = -1;
     cmd_node *next_cmd;
     char **argv;
+    np_node *np_in;
 
     use_sh_wait = 1;
 
+    // Handle numbered pipe
+    fdlist_update();
+    np_in = fdlist_find_by_numbered(0);
+
     while (cmd) {
-        int cur_stdout_pipe[2] = {-1, -1};
-        int cur_stderr_pipe[2] = {-1, -1};
+        np_node *np_out = NULL;
+        int cur_pipe[2] = {-1, -1};
 
         next_cmd = cmd->next;
 
-        // TODO: Handle pipe
+        // Handle pipe
         switch(cmd->pipetype) {
         case PIPE_ORDINARY:
-            if (pipe(cur_stdout_pipe)) {
+            if (pipe(cur_pipe)) {
                 printf("[x] pipe error: %d\n", errno);
             }
             break;
         case PIPE_NUM_STDOUT:
-            break;
         case PIPE_NUM_OUTERR:
+            if (cmd->numbered) {
+                np_out = fdlist_find_by_numbered(cmd->numbered);
+                if (!np_out) {
+                    np_out = fdlist_insert(cmd->numbered);
+                }
+            }
             break;
         default:
             // No pipe
             break;
         }
 
-        // TODO: Update global_cmd_list for numbered pipe
-
         // Execute command
         if ((pid = fork()) > 0) {
             // Parent process
             argv_node *cur_an, *next_an;
 
-            // Handle pipe
-            if (old_stdout_pipe != -1) {
-                close(old_stdout_pipe);
+            // Handle input pipe
+            if (read_pipe != -1) {
+                close(read_pipe); // read_pipe will be updated later
             }
 
-            if (old_stderr_pipe != -1) {
-                close(old_stderr_pipe);
-            }
-
-            if (cur_stdout_pipe[1] != -1) {
-                close(cur_stdout_pipe[1]);
-                old_stdout_pipe = cur_stdout_pipe[0];
+            if (cur_pipe[1] != -1) {
+                close(cur_pipe[1]);
+                read_pipe = cur_pipe[0];
             } else {
-                old_stdout_pipe = -1;
+                read_pipe = -1;
             }
 
-            if (cur_stderr_pipe[1] != -1) {
-                close(cur_stderr_pipe[1]);
-                old_stderr_pipe = cur_stderr_pipe[0];
-            } else {
-                old_stderr_pipe = -1;
-            }
+            // Handle numbered pipe
+            np_in = NULL;
 
             // Free memory
             if (cmd->cmd)
@@ -336,23 +421,32 @@ int cmd_run(cmd_node *cmd)
             cmd = next_cmd;
         } else if (!pid) {
             // Child process
-            // Handle pipe
-            if (old_stdout_pipe != -1) {
-                dup2(old_stdout_pipe, STDIN_FILENO); // Not sure about that
-            }
-
-            if (old_stderr_pipe != -1) {
-                dup2(old_stderr_pipe, STDIN_FILENO); // Not sure about that
+            // Handle input pipe
+            if (np_in) {
+                close(np_in->fd[1]);
+                dup2(np_in->fd[0], STDIN_FILENO);
+            } else if (read_pipe != -1) {
+                dup2(read_pipe, STDIN_FILENO);
             }
             
-            if (cur_stdout_pipe[1] != -1) {
-                close(cur_stdout_pipe[0]);
-                dup2(cur_stdout_pipe[1], STDOUT_FILENO);
-            }
-
-            if (cur_stderr_pipe[1] != -1) {
-                close(cur_stderr_pipe[0]);
-                dup2(cur_stderr_pipe[1], STDERR_FILENO);
+            // Handle output pipe
+            switch(cmd->pipetype) {
+            case PIPE_ORDINARY:
+                close(cur_pipe[0]);
+                dup2(cur_pipe[1], STDOUT_FILENO);
+                break;
+            case PIPE_NUM_STDOUT:
+                close(np_out->fd[0]);
+                dup2(np_out->fd[1], STDOUT_FILENO);
+                break;
+            case PIPE_NUM_OUTERR:
+                close(np_out->fd[0]);
+                dup2(np_out->fd[1], STDOUT_FILENO);
+                dup2(np_out->fd[1], STDERR_FILENO);
+                break;
+            default:
+                // No pipe
+                break;
             }
 
             // Make argv
@@ -378,6 +472,7 @@ int cmd_run(cmd_node *cmd)
 
     // Disable wait in signal handler
     use_sh_wait = 0;
+    fdlist_remove_by_numbered(0);
     while (wait(NULL) > 0);
 
     return 0;
