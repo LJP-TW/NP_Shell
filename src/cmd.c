@@ -327,6 +327,35 @@ static void fdlist_remove_by_numbered(int numbered)
     }
 }
 
+static void fdlist_close_all_writeend_except_numbered(int numbered)
+{
+    np_node **fd_ptr;
+    np_node *fd_cur;
+    
+    // Find corresponding numbered pipe
+    fd_ptr = &global_nplist;
+    while ((fd_cur = *fd_ptr)) {
+        fd_ptr = &(fd_cur->next);
+
+        if (fd_cur->numbered != numbered)
+            close(fd_cur->fd[1]);
+    }
+}
+
+static void fdlist_close_all_writeend()
+{
+    np_node **fd_ptr;
+    np_node *fd_cur;
+    
+    // Find corresponding numbered pipe
+    fd_ptr = &global_nplist;
+    while ((fd_cur = *fd_ptr)) {
+        fd_ptr = &(fd_cur->next);
+
+        close(fd_cur->fd[1]);
+    }
+}
+
 static np_node* fdlist_insert(int numbered)
 {
     np_node **fd_ptr;
@@ -374,6 +403,7 @@ int cmd_run(cmd_node *cmd)
     int idx;
     pid_t pid;
     int read_pipe = -1;
+    int np = 0;
     cmd_node *next_cmd;
     char **argv;
     np_node *np_in;
@@ -400,6 +430,7 @@ int cmd_run(cmd_node *cmd)
             break;
         case PIPE_NUM_STDOUT:
         case PIPE_NUM_OUTERR:
+            np = 1;
             if (cmd->numbered) {
                 np_out = fdlist_find_by_numbered(cmd->numbered);
                 if (!np_out) {
@@ -456,9 +487,15 @@ int cmd_run(cmd_node *cmd)
             cmd = next_cmd;
         } else if (!pid) {
             // Child process
+            // Handle another pipe
+            if (np_out) {
+                fdlist_close_all_writeend_except_numbered(cmd->numbered);
+            } else {
+                fdlist_close_all_writeend();
+            }
+
             // Handle input pipe
             if (np_in) {
-                close(np_in->fd[1]);
                 dup2(np_in->fd[0], STDIN_FILENO);
             } else if (read_pipe != -1) {
                 dup2(read_pipe, STDIN_FILENO);
@@ -510,7 +547,9 @@ int cmd_run(cmd_node *cmd)
     // Disable wait in signal handler
     use_sh_wait = 0;
     fdlist_remove_by_numbered(0);
-    while (wait(NULL) > 0);
+    if (!np) {
+        while (wait(NULL) > 0);
+    }
 
     return 0;
 }
