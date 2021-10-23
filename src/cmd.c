@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <signal.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <sys/wait.h>
 
 #include "sys_variable.h"
@@ -105,6 +106,7 @@ static int cmd_parse_special_symbols(cmd_node *cmd, char **token_ptr, int ssidx)
         // Stdout redirection (cmd > file)
         if ((token = strtok(NULL, " ")) != NULL) {
             cmd->rd_output = strdup(token);
+            cmd->pipetype = PIPE_FIL_STDOUT;
             *token_ptr = token;
         } else {
             // TODO: Report error
@@ -361,6 +363,7 @@ int cmd_run(cmd_node *cmd)
     while (cmd) {
         np_node *np_out = NULL;
         int cur_pipe[2] = {-1, -1};
+        int filefd = -1;
 
         next_cmd = cmd->next;
 
@@ -379,6 +382,9 @@ int cmd_run(cmd_node *cmd)
                     np_out = fdlist_insert(cmd->numbered);
                 }
             }
+            break;
+        case PIPE_FIL_STDOUT:
+            filefd = open(cmd->rd_output, O_WRONLY | O_CREAT | O_TRUNC, S_IRWXU | S_IRGRP | S_IROTH);
             break;
         default:
             // No pipe
@@ -404,6 +410,11 @@ int cmd_run(cmd_node *cmd)
 
             // Handle numbered pipe
             np_in = NULL;
+
+            // Handle file pipe
+            if (filefd != -1) {
+                close(filefd);
+            }
 
             // Free memory
             if (cmd->cmd)
@@ -444,6 +455,8 @@ int cmd_run(cmd_node *cmd)
                 dup2(np_out->fd[1], STDOUT_FILENO);
                 dup2(np_out->fd[1], STDERR_FILENO);
                 break;
+            case PIPE_FIL_STDOUT:
+                dup2(filefd, STDOUT_FILENO);
             default:
                 // No pipe
                 break;

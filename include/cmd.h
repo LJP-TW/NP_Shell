@@ -4,6 +4,7 @@
 #define PIPE_ORDINARY   1
 #define PIPE_NUM_STDOUT 2
 #define PIPE_NUM_OUTERR 3
+#define PIPE_FIL_STDOUT 4
 
 typedef struct argv_node_tag argv_node;
 struct argv_node_tag {
@@ -33,6 +34,7 @@ struct cmd_node_tag {
     // 1: |   PIPE_ORDINARY   Pipe stdout
     // 2: |x  PIPE_NUM_STDOUT Pipe stdout
     // 3: !x  PIPE_NUM_OUTERR Pipe stdout and stderr
+    // 4: > f PIPE_FIL_STDOUT Pipe stdout to file
     int pipetype;
 
     // Numbered Pipe
