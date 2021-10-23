@@ -154,8 +154,31 @@ static int cmd_parse_special_symbols(cmd_node *cmd, char **token_ptr, int ssidx)
 
 static void cmd_parse_bulitin_cmd(cmd_node *cmd, char *token, int bulitin_cmd_id)
 {
-    // TODO: Parse bulit-in command
+    // Parse bulit-in command
+    char *var;
+    char *value;
+    char *envvalue;
 
+    switch (bulitin_cmd_id) {
+    case 0:
+        // setenv
+        var = strtok(NULL, " ");
+        value = strtok(NULL, " ");
+        setenv(var, value, 1);
+        break;
+    case 1:
+        // printenv
+        var = strtok(NULL, " ");
+
+        envvalue = getenv(var);
+        if (envvalue)
+            printf("%s\n", envvalue);
+        break;
+    case 2:
+        // exit
+        exit(0);
+        break;
+    }
 }
 
 cmd_node* cmd_parse(char *cmd_line)
@@ -209,7 +232,7 @@ cmd_node* cmd_parse(char *cmd_line)
 
             if (bulitin_cmd_id != -1) {
                 cmd_parse_bulitin_cmd(cmd, token, bulitin_cmd_id);
-                break;
+                return NULL;
             }
         }
         

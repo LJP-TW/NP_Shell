@@ -33,18 +33,20 @@ int main(void)
         cmd = cmd_parse(cmd_line);
 
         // Debug
-        // for (cmd_node *c = cmd; c; c = c->next) {
-        //     printf("cmd: %s\n", c->cmd);
-        //     printf("argv_len: %d\n", c->argv_len);
-        //     for (argv_node *argv = c->argv; argv; argv = argv->next) {
-        //         printf("\t%s\n", argv->argv);
+        // if (cmd) {
+        //     for (cmd_node *c = cmd; c; c = c->next) {
+        //         printf("cmd: %s\n", c->cmd);
+        //         printf("argv_len: %d\n", c->argv_len);
+        //         for (argv_node *argv = c->argv; argv; argv = argv->next) {
+        //             printf("\t%s\n", argv->argv);
+        //         }
+        //         if (c->rd_output)
+        //             printf("rd_output: %s\n", c->rd_output);
+        //         if (c->pipetype)
+        //             printf("pipetype : %d\n", c->pipetype);
+        //         if (c->numbered)
+        //             printf("numbered : %d\n", c->numbered);
         //     }
-        //     if (c->rd_output)
-        //         printf("rd_output: %s\n", c->rd_output);
-        //     if (c->pipetype)
-        //         printf("pipetype : %d\n", c->pipetype);
-        //     if (c->numbered)
-        //         printf("numbered : %d\n", c->numbered);
         // }
 
         // Executing command
@@ -54,8 +56,9 @@ int main(void)
 
 void init(void)
 {
-    // TODO: Initializing PATH
-    // setenv("PATH", "/bin", 1);
+    // Initializing PATH
+    setenv("PATH", "bin:.", 1);
+    
     cmd_init();
 }
 
