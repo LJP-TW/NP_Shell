@@ -9,6 +9,7 @@
 
 #include "sys_variable.h"
 #include "cmd.h"
+#include "pidlist.h"
 
 #define ASCII_SPACE 0x20
 
@@ -31,16 +32,31 @@ const char *special_symbols[] = {">",
 
 static np_node *global_nplist;
 static int use_sh_wait;
+static pid_list *plist;
+static int plist_lock;
 
 static void signal_handler(int signum)
 {
+    int cpid;
+    int ok = 0;
+    int ret;
+
     switch (signum) {
     case SIGCHLD:
         if (!use_sh_wait)
             return;
 
         // When child process ends, call signal_handler and wait
-        wait(NULL);
+        cpid = wait(NULL);
+
+        if (!plist_lock) {
+            // Save to update plist
+            ok = plist_delete_by_pid(plist, cpid);
+        }
+
+        if (!ok) {
+            plist_insert(sh_closed_plist, cpid);
+        }
 
         break;
     default:
@@ -52,6 +68,13 @@ void cmd_init()
 {
     // Register signal handler
     signal(SIGCHLD, signal_handler);
+
+    // Init closed pid_list
+    closed_plist    = plist_init();
+    sh_closed_plist = plist_init();
+
+    // Init lock
+    plist_lock = 1;
 }
 
 int cmd_read(char *cmd_line)
@@ -314,8 +337,11 @@ static void fdlist_remove_by_numbered(int numbered)
             *fd_ptr = fd_cur->next;
             
             // Free it
-            close(fd_cur->fd[0]);
-            close(fd_cur->fd[1]);
+            if (fd_cur->fd[0] != -1)
+                close(fd_cur->fd[0]);
+            if (fd_cur->fd[1] != -1)
+                close(fd_cur->fd[1]);
+            plist_release(fd_cur->plist);
             free(fd_cur);
 
             // End
@@ -337,8 +363,10 @@ static void fdlist_close_all_writeend_except_numbered(int numbered)
     while ((fd_cur = *fd_ptr)) {
         fd_ptr = &(fd_cur->next);
 
-        if (fd_cur->numbered != numbered)
+        if (fd_cur->numbered != numbered) {
             close(fd_cur->fd[1]);
+            fd_cur->fd[1] = -1;
+        }
     }
 }
 
@@ -353,6 +381,7 @@ static void fdlist_close_all_writeend()
         fd_ptr = &(fd_cur->next);
 
         close(fd_cur->fd[1]);
+        fd_cur->fd[1] = -1;
     }
 }
 
@@ -362,6 +391,7 @@ static np_node* fdlist_insert(int numbered)
     np_node *fd_cur;
     np_node *new_np = malloc(sizeof(np_node));
     new_np->next = NULL;
+    new_np->plist = NULL;
     new_np->numbered = numbered;
     pipe(new_np->fd);
 
@@ -388,8 +418,11 @@ static void fdlist_update()
             *fd_ptr = fd_cur->next;
 
             // Free it
-            close(fd_cur->fd[0]);
-            close(fd_cur->fd[1]);
+            if (fd_cur->fd[0] != -1)
+                close(fd_cur->fd[0]);
+            if (fd_cur->fd[1] != -1)
+                close(fd_cur->fd[1]);
+            plist_release(fd_cur->plist);
             free(fd_cur);
         } 
         else {
@@ -403,19 +436,21 @@ int cmd_run(cmd_node *cmd)
     int idx;
     pid_t pid;
     int read_pipe = -1;
-    int np = 0;
+    np_node *np_out = NULL;
     cmd_node *next_cmd;
     char **argv;
-    np_node *np_in;
+    np_node *np_in, *origin_np_in;
 
+    plist = plist_init();
+
+    plist_lock = 0;
     use_sh_wait = 1;
 
     // Handle numbered pipe
     fdlist_update();
-    np_in = fdlist_find_by_numbered(0);
+    origin_np_in = np_in = fdlist_find_by_numbered(0);
 
     while (cmd) {
-        np_node *np_out = NULL;
         int cur_pipe[2] = {-1, -1};
         int filefd = -1;
 
@@ -430,7 +465,6 @@ int cmd_run(cmd_node *cmd)
             break;
         case PIPE_NUM_STDOUT:
         case PIPE_NUM_OUTERR:
-            np = 1;
             if (cmd->numbered) {
                 np_out = fdlist_find_by_numbered(cmd->numbered);
                 if (!np_out) {
@@ -450,6 +484,11 @@ int cmd_run(cmd_node *cmd)
         if ((pid = fork()) > 0) {
             // Parent process
             argv_node *cur_an, *next_an;
+
+            // Handle pid list
+            plist_lock = 1;
+            plist_insert(plist, pid);
+            plist_lock = 0;
 
             // Handle input pipe
             if (read_pipe != -1) {
@@ -540,8 +579,17 @@ int cmd_run(cmd_node *cmd)
             exit(errno);
         } else {
             // Handle error
+            pid_t cpid;
+
             // Wait for one process and re-run again
-            wait(NULL);
+            cpid = wait(NULL);
+
+            // Record closed pid
+            plist_insert(closed_plist, cpid);
+
+            plist_lock = 1;
+            plist_delete_intersect(plist, closed_plist);
+            plist_lock = 0;
 
             // Recycle all the resources
             switch(cmd->pipetype) {
@@ -571,9 +619,48 @@ int cmd_run(cmd_node *cmd)
 
     // Disable wait in signal handler
     use_sh_wait = 0;
-    fdlist_remove_by_numbered(0);
-    if (!np) {
-        while (wait(NULL) > 0);
+
+    // close fd
+    if (origin_np_in) {
+        close(origin_np_in->fd[1]);
+        origin_np_in->fd[1] = -1;
+    }
+
+    // Update pid list
+    plist_merge(closed_plist, sh_closed_plist);
+
+    if (!np_out) {
+        int status;
+
+        // Wait for origin_np_in
+        if (origin_np_in) {
+            plist_delete_intersect(origin_np_in->plist, closed_plist);
+            for (pid_node *pn = origin_np_in->plist->next; pn; pn = pn->next) {
+                waitpid(pn->pid, &status, 0);
+            }
+        }
+
+        // Wait for plist
+        plist_delete_intersect(plist, closed_plist);
+        for (pid_node *pn = plist->next; pn; pn = pn->next) {
+            waitpid(pn->pid, &status, 0);
+        }
+
+        // Free plist
+        plist_release(plist);
+    } else {
+        // If there is origin_np_in, merge origin_np_in to plist
+        if (origin_np_in) {
+            plist_merge(plist, origin_np_in->plist);
+        }
+
+        // Update np_out->plist    
+        if (!(np_out->plist)) {
+            np_out->plist = plist;
+        } else {
+            plist_merge(np_out->plist, plist);
+            plist_release(plist);
+        }
     }
 
     return 0;

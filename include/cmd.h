@@ -1,6 +1,8 @@
 #ifndef CMD_H
 #define CMD_H
 
+#include "pidlist.h"
+
 #define PIPE_ORDINARY   1
 #define PIPE_NUM_STDOUT 2
 #define PIPE_NUM_OUTERR 3
@@ -44,6 +46,7 @@ struct cmd_node_tag {
 typedef struct numbered_pipe_node_tag np_node;
 struct numbered_pipe_node_tag {
     np_node *next;
+    pid_list *plist;
     int numbered;
     int fd[2];
 };
