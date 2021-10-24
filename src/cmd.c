@@ -539,8 +539,33 @@ int cmd_run(cmd_node *cmd)
             fprintf(stderr, "Unknown command: [%s].\n", cmd->cmd);
             exit(errno);
         } else {
-            // TODO: handle error
-            printf("[x] fork error\n");
+            // Handle error
+            // Wait for one process and re-run again
+            wait(NULL);
+
+            // Recycle all the resources
+            switch(cmd->pipetype) {
+            case PIPE_ORDINARY:
+                if (cur_pipe[0] != -1) {
+                    close(cur_pipe[0]);
+                    close(cur_pipe[1]);
+                }
+                break;
+            case PIPE_NUM_STDOUT:
+            case PIPE_NUM_OUTERR:
+                if (cmd->numbered) {
+                    fdlist_remove_by_numbered(cmd->numbered);
+                }
+                break;
+            case PIPE_FIL_STDOUT:
+                if (filefd != -1)
+                    close(filefd);
+                break;
+            default:
+                // No pipe
+                break;
+            }
+            // Re-run
         }
     }
 
