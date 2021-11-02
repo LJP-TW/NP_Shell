@@ -1,7 +1,8 @@
-#include <stdio.h> // Deubg
 #include <stdlib.h>
+#include <signal.h>
 
 #include "pidlist.h"
+#include "sys_variable.h"
 
 pid_list *closed_plist;
 pid_list *sh_closed_plist;
@@ -41,6 +42,16 @@ void plist_insert(pid_list *plist, pid_t pid)
     plist->last = &(new_node->next);
 
     plist->len += 1;
+}
+
+void plist_insert_block(pid_list *plist, pid_t pid)
+{
+    sigset_t oldset;
+    sigprocmask(SIG_BLOCK, &sigset_SIGCHLD, &oldset);
+
+    plist_insert(plist, pid);
+
+    sigprocmask(SIG_SETMASK, &oldset, NULL);
 }
 
 void plist_merge(pid_list *plist1, pid_list *plist2)
@@ -88,12 +99,22 @@ void plist_delete_intersect(pid_list *plist1, pid_list *plist2)
     }
 }
 
+void plist_delete_intersect_block(pid_list *plist1, pid_list *plist2)
+{
+    sigset_t oldset;
+    sigprocmask(SIG_BLOCK, &sigset_SIGCHLD, &oldset);
+
+    plist_delete_intersect(plist1, plist2);
+
+    sigprocmask(SIG_SETMASK, &oldset, NULL);
+}
+
 int plist_delete_by_pid(pid_list *plist1, pid_t pid)
 {
     pid_node **pa;
     pid_node *ta;
 
-    if (!plist1->len)
+    if (!plist1 || !plist1->len)
         return 0;
 
     pa = &(plist1->next);

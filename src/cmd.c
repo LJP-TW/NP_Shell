@@ -33,13 +33,12 @@ const char *special_symbols[] = {">",
 static np_node *global_nplist;
 static int use_sh_wait;
 static pid_list *plist;
-static int plist_lock;
+sigset_t sigset_SIGCHLD;
 
 static void signal_handler(int signum)
 {
     int cpid;
     int ok = 0;
-    int ret;
 
     switch (signum) {
     case SIGCHLD:
@@ -49,10 +48,8 @@ static void signal_handler(int signum)
         // When child process ends, call signal_handler and wait
         cpid = wait(NULL);
 
-        if (!plist_lock) {
-            // Save to update plist
-            ok = plist_delete_by_pid(plist, cpid);
-        }
+        // Save to update plist
+        ok = plist_delete_by_pid(plist, cpid);
 
         if (!ok) {
             plist_insert(sh_closed_plist, cpid);
@@ -64,6 +61,28 @@ static void signal_handler(int signum)
     }
 }
 
+// Disable signal handler
+static void disable_sh()
+{
+    sigset_t oldset;
+    sigprocmask(SIG_BLOCK, &sigset_SIGCHLD, &oldset);
+
+    use_sh_wait = 0;
+
+    sigprocmask(SIG_SETMASK, &oldset, NULL);
+}
+
+// Enable signal handler
+static void enable_sh()
+{
+    sigset_t oldset;
+    sigprocmask(SIG_BLOCK, &sigset_SIGCHLD, &oldset);
+
+    use_sh_wait = 1;
+
+    sigprocmask(SIG_SETMASK, &oldset, NULL);
+}
+
 void cmd_init()
 {
     // Register signal handler
@@ -73,8 +92,41 @@ void cmd_init()
     closed_plist    = plist_init();
     sh_closed_plist = plist_init();
 
-    // Init lock
-    plist_lock = 1;
+    // Init sigset
+    sigemptyset(&sigset_SIGCHLD);
+    sigaddset(&sigset_SIGCHLD, SIGCHLD);
+}
+
+static cmd_node* cmd_node_init()
+{
+    cmd_node *node = malloc(sizeof(cmd_node));
+
+    node->next = NULL;
+    node->cmd  = NULL;
+    node->argv = NULL;
+    node->rd_output = NULL;
+    node->cmd_len = 0;
+    node->argv_len = 0;
+    node->pipetype = 0;
+    node->numbered = 0;
+
+    return node;
+}
+
+static void cmd_node_release(cmd_node *cmd)
+{
+    argv_node *cur_an, *next_an;
+
+    if (cmd->cmd)
+        free(cmd->cmd);
+    for (cur_an = cmd->argv; cur_an; cur_an = next_an) {
+        next_an = cur_an->next;
+        free(cur_an->argv);
+        free(cur_an);
+    }
+    if (cmd->rd_output)
+        free(cmd->rd_output);
+    free(cmd);
 }
 
 int cmd_read(char *cmd_line)
@@ -88,7 +140,7 @@ int cmd_read(char *cmd_line)
     len = strlen(cmd_line);
 
     if (cmd_line[len-1] == '\n') {
-        cmd_line[len-1] = NULL;
+        cmd_line[len-1] = 0;
         len -= 1;
     }
 
@@ -119,7 +171,6 @@ static int cmd_parse_special_symbols(cmd_node *cmd, char **token_ptr, int ssidx)
 {
     // Parse special symbols
     char *token = *token_ptr;
-    char c = token[0];
     int number;
 
     switch (ssidx)
@@ -138,7 +189,7 @@ static int cmd_parse_special_symbols(cmd_node *cmd, char **token_ptr, int ssidx)
     
     case 1:
         // |
-        if (token[1] == NULL) {
+        if (token[1] == 0) {
             // Ordinary pipe
             // cmd1 | cmd2
             cmd->pipetype = PIPE_ORDINARY;
@@ -222,18 +273,9 @@ cmd_node* cmd_parse(char *cmd_line)
         argv_node **ptr;
         int ssidx; // Special symbol idx
 
-        *curcmd = malloc(sizeof(cmd_node));
+        *curcmd = cmd_node_init();
         cmd = *curcmd;
         curcmd = &(cmd->next);
-
-        cmd->next = NULL;
-        cmd->cmd  = NULL;
-        cmd->argv = NULL;
-        cmd->rd_output = NULL;
-        cmd->cmd_len = 0;
-        cmd->argv_len = 0;
-        cmd->pipetype = 0;
-        cmd->numbered = 0;
 
         // Check command is a valid path
         if (!valid_filepath(token)) {
@@ -443,8 +485,8 @@ int cmd_run(cmd_node *cmd)
 
     plist = plist_init();
 
-    plist_lock = 0;
-    use_sh_wait = 1;
+    // Enable signal handler
+    enable_sh();
 
     // Handle numbered pipe
     fdlist_update();
@@ -483,12 +525,9 @@ int cmd_run(cmd_node *cmd)
         // Execute command
         if ((pid = fork()) > 0) {
             // Parent process
-            argv_node *cur_an, *next_an;
 
             // Handle pid list
-            plist_lock = 1;
-            plist_insert(plist, pid);
-            plist_lock = 0;
+            plist_insert_block(plist, pid);
 
             // Handle input pipe
             if (read_pipe != -1) {
@@ -511,16 +550,7 @@ int cmd_run(cmd_node *cmd)
             }
 
             // Free memory
-            if (cmd->cmd)
-                free(cmd->cmd);
-            for (cur_an = cmd->argv; cur_an; cur_an = next_an) {
-                next_an = cur_an->next;
-                free(cur_an->argv);
-                free(cur_an);
-            }
-            if (cmd->rd_output)
-                free(cmd->rd_output);
-            free(cmd);
+            cmd_node_release(cmd);
 
             // Go to next command
             cmd = next_cmd;
@@ -581,15 +611,15 @@ int cmd_run(cmd_node *cmd)
             // Handle error
             pid_t cpid;
 
+            // Disable signal handler
+            disable_sh();
+
             // Wait for one process and re-run again
             cpid = wait(NULL);
 
             // Record closed pid
             plist_insert(closed_plist, cpid);
-
-            plist_lock = 1;
             plist_delete_intersect(plist, closed_plist);
-            plist_lock = 0;
 
             // Recycle all the resources
             switch(cmd->pipetype) {
@@ -613,12 +643,15 @@ int cmd_run(cmd_node *cmd)
                 // No pipe
                 break;
             }
+
+            enable_sh();
+
             // Re-run
         }
     }
 
     // Disable wait in signal handler
-    use_sh_wait = 0;
+    disable_sh();
 
     // close fd
     if (origin_np_in) {
@@ -662,6 +695,8 @@ int cmd_run(cmd_node *cmd)
             plist_release(plist);
         }
     }
+
+    enable_sh();
 
     return 0;
 }
